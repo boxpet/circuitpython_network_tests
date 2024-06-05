@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 Justin Myers
+#
+# SPDX-License-Identifier: MIT
+
+[project]
+name = "circuitpython_network_tests"
+authors = [
+  { name="Justin Myers" },
+]
+description = "A set of circuitpython network tests"
+readme = "README.rst"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/boxpet/circuitpython_network_tests"
+"Bug Tracker" = "https://github.com/boxpet/circuitpython_network_tests/issues"
+
+[tool.ruff]
+target-version = "py38"
+
+[tool.ruff.format]
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = ["I", "PL", "UP"]
