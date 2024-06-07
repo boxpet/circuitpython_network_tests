@@ -4,99 +4,93 @@
 
 import os
 import time
-import unittest
 from errno import EAGAIN
 
-import adafruit_connection_manager
-from connection_helper import get_radio
-from helpers import get_ipv4_address, get_radio_force
+from network_test_case import NetworkTestCase, SkipTest
 
-FORCE_RADIO = os.getenv("NETWORK_TEST_RADIO_FORCE", get_radio_force())
+from helpers import (
+    ValidationMatrix,
+    check_time,
+    generate_random_number_values,
+    get_ipv4_address,
+)
+
 PORT = os.getenv("NETWORK_TEST_SERVER_PORT", None) or 5000
-UDP_MESSAGE_TIMEOUT = os.getenv("NETWORK_TEST_UDP_MESSAGE_TIMEOUT", None) or 60
+MESSAGE_LOOPS = os.getenv("NETWORK_TEST_UDP_MESSAGE_LOOPS", None) or 3
+MESSAGE_TIMEOUT = os.getenv("NETWORK_TEST_UDP_MESSAGE_TIMEOUT", None) or 60
 
 
-"""
-When the UDP server tests are running they will display something like:
------
-test_esp32spi_udp_server (TestUDPServer) ... skipped: Radio isn't an ESP32SPI
-test_native_udp_server (TestUDPServer) ... Server started at: 192.168.xx.xx:5000 - waiting for UDP client message.....
------
-Once you see "waiting for UDP client message", it will add a "." every second until it get's a message.
-To send a message, paste this method into a CPython terminal and call it with the IP and port from the test
-"""
+class TestUDPServer(NetworkTestCase):
+    VALIDATES = [
+        ValidationMatrix.SERVER_UDP,
+    ]
 
-
-def utp_client_send(ip=None, port=None):
-    import socket
-
-    if ip is None:
-        ip = input("IP? ")
-    if port is None:
-        port = input("Port? ")
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        size = sock.sendto(b"Hello World!", (ip, port))
-        print(f"Sent {size} bytes to {ip}:{port}")
-
-
-class TestUDPServer(unittest.TestCase):
     def test_esp32spi_udp_server(self):
-        radio = get_radio(force=FORCE_RADIO)
-        if radio.__class__.__name__ != "ESP_SPIcontrol":
-            raise unittest.SkipTest("Radio isn't an ESP32SPI")
+        if self.radio.__class__.__name__ != "ESP_SPIcontrol":
+            raise SkipTest("self.radio isn't an ESP32SPI")
 
-        ip_address = get_ipv4_address(radio)
-        pool = adafruit_connection_manager.get_radio_socketpool(radio)
-        sock = pool.socket(pool.AF_INET, pool.SOCK_DGRAM)
-        radio.start_server(PORT, sock._socknum, conn_mode=radio.UDP_MODE)
+        ip_address = get_ipv4_address(self.radio)
+        sock = self.pool.socket(self.pool.AF_INET, self.pool.SOCK_DGRAM)
+        self.radio.start_server(PORT, sock._socknum, conn_mode=self.radio.UDP_MODE)
 
         print(f" Server started at: {ip_address}:{PORT}", end="")
-        print(" - waiting for UDP client message", end="")
+        print(" - waiting for UDP client connection.", end="")
 
         last_message = start = time.monotonic()
+        ip_address_client = None
         while True:
-            bytes_available = radio.socket_available(sock._socknum)
+            bytes_available = self.radio.socket_available(sock._socknum)
             if bytes_available:
-                data = radio.socket_read(sock._socknum, bytes_available)
+                print("R", end="")
+                data = self.radio.socket_read(sock._socknum, bytes_available)
                 self.assertEqual(data, b"Hello World!")
+                remote_data = self.radio.get_remote_data(sock._socknum)
+                ip_address_client = remote_data["ip_addr"]
                 break
 
-            elasped = time.monotonic()
-            if int(elasped - last_message) >= 1:
-                last_message = elasped
-                print(".", end="")
+            last_message = check_time(start, last_message, MESSAGE_TIMEOUT)
 
-            if int(elasped - start) > UDP_MESSAGE_TIMEOUT:
-                raise TimeoutError(
-                    f"Didn't recieve UDP message within {UDP_MESSAGE_TIMEOUT} seconds"
-                )
+        for i in range(MESSAGE_LOOPS):
+            test_data, test_expected = generate_random_number_values()
+            print("S", end="")
+            self.radio.socket_write(
+                sock._socknum, test_data, conn_mode=self.radio.UDP_MODE
+            )
+
+            last_message = start = time.monotonic()
+            while True:
+                bytes_available = self.radio.socket_available(sock._socknum)
+                if bytes_available:
+                    print("R", end="")
+                    data = self.radio.socket_read(sock._socknum, bytes_available)
+                    self.assertEqual(data, test_expected)
+                    break
+
+                last_message = check_time(start, last_message, MESSAGE_TIMEOUT)
+
+        sock.close()
 
     def test_native_udp_server(self):
-        radio = get_radio(force=FORCE_RADIO)
-        if radio.__class__.__name__ == "ESP_SPIcontrol":
-            raise unittest.SkipTest("Radio isn't native")
+        if self.radio.__class__.__name__ == "ESP_SPIcontrol":
+            raise SkipTest("self.radio isn't native")
 
-        ip_address = get_ipv4_address(radio)
-        if radio.__class__.__name__ == "Radio":
-            ip_address_server = "0.0.0.0"
-        else:
-            ip_address_server = ip_address
-
-        pool = adafruit_connection_manager.get_radio_socketpool(radio)
-        sock = pool.socket(pool.AF_INET, pool.SOCK_DGRAM)
-        sock.setsockopt(pool.SOL_SOCKET, pool.SO_REUSEADDR, 1)
-        sock.bind((ip_address_server, PORT))
+        ip_address = get_ipv4_address(self.radio)
+        sock = self.pool.socket(self.pool.AF_INET, self.pool.SOCK_DGRAM)
+        sock.setsockopt(self.pool.SOL_SOCKET, self.pool.SO_REUSEADDR, 1)
+        sock.bind((ip_address, PORT))
         sock.setblocking(False)
 
         print(f" Server started at: {ip_address}:{PORT}", end="")
-        print(" - waiting for UDP client message", end="")
+        print(" - waiting for UDP client connection.", end="")
 
         last_message = start = time.monotonic()
         buffer = bytearray(64)
+        client_ip_address = None
         while True:
             try:
-                bytes_read = sock.recv_into(buffer, len(buffer))
+                bytes_read, client_ip_address = sock.recvfrom_into(buffer)
                 if bytes_read:
+                    print("R", end="")
                     data = bytes(buffer[:bytes_read])
                     self.assertEqual(data, b"Hello World!")
                     break
@@ -104,12 +98,24 @@ class TestUDPServer(unittest.TestCase):
                 if exc.errno != EAGAIN:
                     raise
 
-            elasped = time.monotonic()
-            if int(elasped - last_message) >= 1:
-                last_message = elasped
-                print(".", end="")
+            last_message = check_time(start, last_message, MESSAGE_TIMEOUT)
 
-            if int(elasped - start) > UDP_MESSAGE_TIMEOUT:
-                raise TimeoutError(
-                    f"Didn't recieve UDP message within {UDP_MESSAGE_TIMEOUT} seconds"
-                )
+        for i in range(MESSAGE_LOOPS):
+            test_data, test_expected = generate_random_number_values()
+            print("S", end="")
+            sock.sendto(test_data, client_ip_address)
+
+            last_message = start = time.monotonic()
+            while True:
+                try:
+                    bytes_read, client_ip_address = sock.recvfrom_into(buffer)
+                    if bytes_read:
+                        print("R", end="")
+                        data = bytes(buffer[:bytes_read])
+                        self.assertEqual(data, test_expected)
+                        break
+                except OSError as exc:
+                    if exc.errno != EAGAIN:
+                        raise
+
+                last_message = check_time(start, last_message, MESSAGE_TIMEOUT)

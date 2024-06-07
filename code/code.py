@@ -7,24 +7,28 @@ import sys
 import time
 import unittest
 
-try:
-    import ssl
-except ImportError:
-    ssl = None
-
 import adafruit_connection_manager
 import alarm
 import board
+import supervisor
 from connection_helper import enable_log, get_radio
+from network_test_case import NetworkTestCase
+
 from helpers import (
     RESULT_BLOCKS,
     RESULT_NOT_RUN,
     SLEEP_DELAY,
     TEST_PATH,
+    ValidationMatrix,
     get_ipv4_address,
     get_radio_force,
     select_radio,
 )
+
+try:
+    import ssl
+except ImportError:
+    ssl = None
 
 
 class NetworkTests:
@@ -32,24 +36,56 @@ class NetworkTests:
         self._sleep_delay = sleep_delay
         self._test_files = []
 
+    def board_info(self):
+        machine = getattr(sys.implementation, "_machine", "Unknown")
+        version = ".".join([str(part) for part in sys.implementation.version])
+        has_ssl = "True" if ssl else False
+
+        print()
+        print(f"Testing on:")
+        print(f" {machine}")
+        print(f" {sys.implementation.name} v{version}")
+        print(f" {board.board_id}")
+        print(f" Has ssl: {has_ssl}")
+
     def find_test_files(self):
         self._test_files = os.listdir(TEST_PATH)
         self._test_files.sort()
 
     def finish(self):
         print("Tests finished:")
+
+        all_validations = {
+            validation: "U" for validation in ValidationMatrix.get_all_validations()
+        }
+
         total_passed = 0
         total_failed = 0
         total_errored = 0
         total_skipped = 0
         total_exceptioned = 0
         for pos, test_file in enumerate(self._test_files, 1):
+            test_file_path = self.get_import_name(test_file)
+            validates = self.get_test_validates(test_file_path)
+
             test_pos = self.get_test_pos(pos)
             passed = alarm.sleep_memory[test_pos]
             failed = alarm.sleep_memory[test_pos + 1]
             errored = alarm.sleep_memory[test_pos + 2]
             skipped = alarm.sleep_memory[test_pos + 3]
             exceptioned = alarm.sleep_memory[test_pos + 4]
+
+            if failed or errored or exceptioned:
+                validation = "N"
+            elif passed:
+                validation = "Y"
+            elif skipped:
+                validation = "S"
+            else:
+                validation = "U"
+
+            for validate in validates:
+                all_validations[validate] = validation
 
             total_passed += passed
             total_failed += failed
@@ -66,6 +102,15 @@ class NetworkTests:
         print(f"errored:    {total_errored}")
         print(f"skipped:    {total_skipped}")
         print(f"exceptions: {total_exceptioned}")
+
+        enable_log(False)
+        self.board_info()
+        self.radio_check()
+        self.libary_versions()
+        print()
+        print("Validation:")
+        for validation, result in all_validations.items():
+            print(f" {validation:20}: {ValidationMatrix.TEST_RESULTS[result]}")
 
         alarm.sleep_memory[0] = 0
 
@@ -91,16 +136,50 @@ class NetworkTests:
         imported_module = __import__(module_name, None, None, ["*"])
         for module_attribute in dir(imported_module):
             attribute = getattr(imported_module, module_attribute)
-            if (
-                isinstance(attribute, type)
-                and issubclass(attribute, unittest.TestCase)
-                and attribute is not unittest.TestCase
-            ):
+            if self.is_test_case(attribute):
                 test_suite.addTest(attribute)
         return test_suite
 
-    def radio_check(self):
-        selected_radio = select_radio()
+    def get_test_validates(self, module_name):
+        validates = []
+        imported_module = __import__(module_name, None, None, ["*"])
+        for module_attribute in dir(imported_module):
+            attribute = getattr(imported_module, module_attribute)
+            if self.is_test_case(attribute):
+                validates.extend(attribute.VALIDATES)
+        return validates
+
+    def is_test_case(self, attribute):
+        return (
+            isinstance(attribute, type)
+            and issubclass(attribute, unittest.TestCase)
+            and attribute is not unittest.TestCase
+            and attribute is not NetworkTestCase
+        )
+
+    def libary_versions(self):
+        print()
+        print("Library versions:")
+        for library_full_name in [
+            "adafruit_esp32spi.adafruit_esp32spi",
+            "adafruit_minimqtt.adafruit_minimqtt",
+            "adafruit_wiznet5k.adafruit_wiznet5k",
+            "adafruit_connection_manager",
+            "adafruit_ntp",
+            "adafruit_requests",
+        ]:
+            try:
+                library = __import__(library_full_name, None, None, ["*"])
+                library_name = library_full_name.split(".")[0]
+                print(f" {library_name}: {library.__version__}")
+            except ImportError:
+                pass
+
+    def radio_check(self, pick=False):
+        if pick:
+            selected_radio = select_radio()
+        else:
+            selected_radio = None
         force_radio = get_radio_force(selected_radio)
 
         try:
@@ -120,12 +199,13 @@ class NetworkTests:
                 ssid = "n/a"
                 rssi = "n/a"
 
-            print(f"IP Address:  {get_ipv4_address(radio)}")
-            print(f"MAC address: {mac_addess}")
-            print(f"SSID:        {ssid}")
-            print(f"RSSI:        {rssi}")
-            print(f"Firmware:    {firmware_string}")
             print()
+            print("Radio info:")
+            print(f" IP Address:  {get_ipv4_address(radio)}")
+            print(f" MAC address: {mac_addess}")
+            print(f" SSID:        {ssid}")
+            print(f" RSSI:        {rssi}")
+            print(f" Firmware:    {firmware_string}")
 
             return selected_radio
 
@@ -157,13 +237,14 @@ class NetworkTests:
         alarm.sleep_memory[test_pos + 2] = errored
         alarm.sleep_memory[test_pos + 3] = skipped
         alarm.sleep_memory[test_pos + 4] = exceptioned
-        self.set_alarm()
+        supervisor.reload()
 
     def run_test_file(self, module_name):
-        enable_log(False)
         test_runner = unittest.TestRunner()
         test_suite = self.get_test_suite(module_name)
-        return test_runner.run(test_suite)
+        results = test_runner.run(test_suite)
+
+        return results
 
     def run_tests(self, new_run, selected_radio):
         print()
@@ -173,7 +254,7 @@ class NetworkTests:
         if new_run:
             self.setup(selected_radio)
             print("Starting...")
-            self.set_alarm()
+            supervisor.reload()
 
         for pos, test_file in enumerate(self._test_files, 1):
             test_pos = self.get_test_pos(pos)
@@ -182,12 +263,6 @@ class NetworkTests:
             self.run_test(test_file, test_pos)
 
         self.finish()
-
-    def set_alarm(self):
-        time_alarm = alarm.time.TimeAlarm(
-            monotonic_time=time.monotonic() + self._sleep_delay
-        )
-        alarm.exit_and_deep_sleep_until_alarms(time_alarm)
 
     def setup(self, selected_radio):
         result_data = [RESULT_NOT_RUN] * (len(self._test_files) * RESULT_BLOCKS)
@@ -211,9 +286,11 @@ class NetworkTests:
             print("========================================")
             print("Welcome to the network test runner")
             print("========================================")
+            self.board_info()
             self.test_info()
-            selected_radio = self.radio_check()
+            selected_radio = self.radio_check(pick=True)
             if selected_radio >= 0:
+                print()
                 start = input("start tests [y/n]? ").lower() == "y"
                 if start:
                     new_run = True
@@ -225,18 +302,7 @@ class NetworkTests:
             self.run_tests(new_run, selected_radio)
 
     def test_info(self):
-        machine = getattr(sys.implementation, "_machine", "Unknown")
-        version = ".".join([str(part) for part in sys.implementation.version])
-        has_ssl = "True" if ssl else False
-
         print()
-        print(f"Testing on:")
-        print(f" {machine}")
-        print(f" {sys.implementation.name} v{version}")
-        print(f" {board.board_id}")
-        print(f" Has ssl: {has_ssl}")
-        print()
-
         print("Tests:")
         total_test_case_count = 0
         total_test_count = 0
