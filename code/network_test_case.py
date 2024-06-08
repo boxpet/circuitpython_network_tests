@@ -23,8 +23,12 @@ class NetworkTestCase(TestCase):
 
     def tearDown(self):
         import adafruit_connection_manager
+        from connection_helper import deinit_radio
 
-        adafruit_connection_manager.connection_manager_close_all()
+        adafruit_connection_manager.connection_manager_close_all(
+            release_references=True
+        )
+        deinit_radio(self.radio)
 
     def run(self, result: TestResult):
         for name in dir(self):

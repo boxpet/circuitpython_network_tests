@@ -27,7 +27,6 @@ class TestMQTT(NetworkTestCase):
             socket_pool=self.pool,
         )
         mqtt_client.connect()
-        mqtt_client.disconnect()
 
     def test_mqtt_bad_password(self):
         from adafruit_minimqtt import adafruit_minimqtt
