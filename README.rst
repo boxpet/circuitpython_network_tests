@@ -64,6 +64,7 @@ Select the radio option you want and press enter. From there you will see someth
      SSID:        Your-SSID
      RSSI:        -40
      Firmware:    n/a
+     Chip:        n/a
 
     start tests[y/n]?
 

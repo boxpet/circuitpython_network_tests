@@ -18,6 +18,7 @@ RADIO_WIZNET5K = 3
 
 
 class ValidationMatrix:
+    CORE_SSL = "core_ssl"
     MQTT_CONNECTION = "mqtt_connection"
     REQUESTS_HTTP = "requests_http"
     REQUESTS_HTTPS = "requests_https"
@@ -66,10 +67,7 @@ def generate_random_number_values(value_min=1, value_max=9):
 
 
 def get_ipv4_address(radio):
-    if hasattr(radio, "ipv4_address"):
-        return str(radio.ipv4_address)
-    else:
-        return radio.pretty_ip(radio.ip_address)
+    return str(radio.ipv4_address)
 
 
 def get_radio_force(value=None):

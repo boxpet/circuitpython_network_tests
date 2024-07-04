@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: MIT
 
 adafruit_bus_device==5.2.9
-adafruit_connection_manager==3.1.0
-adafruit_esp32spi==8.3.1
+adafruit_connection_manager==3.1.1
+adafruit_esp32spi==8.4.0
 adafruit_minimqtt==7.9.0
 adafruit_ntp==3.1.1
-adafruit_requests==4.0.0
+adafruit_requests==4.1.2
 adafruit_ticks==1.0.13
-adafruit_wiznet5k==7.1.2
+adafruit_wiznet5k==7.1.3

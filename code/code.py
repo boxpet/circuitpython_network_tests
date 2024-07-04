@@ -185,19 +185,21 @@ class NetworkTests:
         try:
             radio = get_radio(force=force_radio)
             pool = adafruit_connection_manager.get_radio_socketpool(radio)
-            firmware = getattr(radio, "firmware_version", b"n/a")
-            firmware_string = firmware.decode("utf-8").split("\x00")[0]
             mac_addess = ":".join(f"{byte:02X}" for byte in radio.mac_address)
 
-            if hasattr(radio, "ap_info"):
-                ssid = radio.ap_info.ssid
-                rssi = radio.ap_info.rssi
-            elif hasattr(radio, "rssi"):
-                ssid = str(radio.ssid, "utf-8")
-                rssi = radio.rssi
-            else:
-                ssid = "n/a"
-                rssi = "n/a"
+            try:
+                if hasattr(radio, "ap_info"):
+                    ssid = radio.ap_info.ssid
+                    rssi = radio.ap_info.rssi
+                else:
+                    ssid = "n/a"
+                    rssi = "n/a"
+            except NotImplementedError:
+                ssid = "unknown"
+                rssi = "unknown"
+
+            firmware = getattr(radio, "firmware_version", "n/a")
+            chip = getattr(radio, "chip", "n/a")
 
             print()
             print("Radio info:")
@@ -205,7 +207,8 @@ class NetworkTests:
             print(f" MAC address: {mac_addess}")
             print(f" SSID:        {ssid}")
             print(f" RSSI:        {rssi}")
-            print(f" Firmware:    {firmware_string}")
+            print(f" Firmware:    {firmware}")
+            print(f" Chip:        {chip}")
 
             return selected_radio
 
